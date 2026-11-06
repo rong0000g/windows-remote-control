@@ -1,0 +1,9 @@
+# 个人配置、日志和密钥
+keymap.ini
+*.log
+*.log.old
+voice-key.bin
+
+# 编译产物，用 scripts/build.ps1 生成
+*.exe
+*.pdb
