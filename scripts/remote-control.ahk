@@ -19,7 +19,6 @@ DEBUG_LOG := A_ScriptDir "\keys-debug.log"
 DICTATION := "语音输入"
 DICTATE_EXE := A_ScriptDir "\dictate.exe"
 DICTATE_ARGS := ""
-DICTATE_EVENT := "Local\RemoteControlDictationToggle"
 VOICE_KEY := A_ScriptDir "\voice-key.bin"
 VOICE_LOCAL := "本机离线"
 VOICE_PROVIDERS := Map(
@@ -69,6 +68,7 @@ ACTIONS := Map(
     "微信-左", {chat: false, param: "", run: (k) => WxMove(-1, 0)},
     "微信-右", {chat: false, param: "", run: (k) => WxMove(1, 0)},
     "微信-确认", {chat: false, param: "", run: (k) => WxConfirm()},
+    "微信-返回", {chat: false, param: "", run: (k) => WxBack()},
     "Grok-上", {chat: false, param: "", run: (k) => GrokMove(0, -1)},
     "Grok-下", {chat: false, param: "", run: (k) => GrokMove(0, 1)},
     "Grok-左", {chat: false, param: "", run: (k) => GrokMove(-1, 0)},
@@ -90,7 +90,7 @@ ACTIONS := Map(
     "不使用", {chat: true, param: "", run: (k) => 0}
 )
 ACTION_ORDER := ["上一个对话", "下一个对话", "返回", "前进", "打开搜索", "搜索确认", "新聊天", "取消或退出",
-    "打开ChatGPT", OPEN_APP, "发送按键", "页面上滚", "页面下滚", "音量增大", "音量减小", "播放暂停", "视频全屏", "浏览器全屏", "切换网页", "微信-上", "微信-下", "微信-左", "微信-右", "微信-确认",
+    "打开ChatGPT", OPEN_APP, "发送按键", "页面上滚", "页面下滚", "音量增大", "音量减小", "播放暂停", "视频全屏", "浏览器全屏", "切换网页", "微信-上", "微信-下", "微信-左", "微信-右", "微信-确认", "微信-返回",
     "Grok-上", "Grok-下", "Grok-左", "Grok-语音聊天", "Grok-确认",
     "ChatGPT-上", "ChatGPT-下", "ChatGPT-删除文字", "ChatGPT-切换模型", "ChatGPT-确认", "ChatGPT-返回", "ChatGPT-新建对话",
     "Claude-上", "Claude-下", "Claude-删除文字", "Claude-确认", "Claude-返回", "Claude-新建对话", "不使用"]
@@ -123,7 +123,8 @@ PROFILES := Map("chrome.exe", MakeProfile("谷歌浏览器", "Chrome", Map(
     "Down", "微信-下",
     "Left", "微信-左",
     "Right", "微信-右",
-    "OK", "微信-确认"
+    "OK", "微信-确认",
+    "Settings", "微信-返回"
 )), "Grok Bot.exe", MakeProfile("Grok Bot", "Grok", Map(
     "Up", "Grok-上",
     "Down", "Grok-下",
@@ -246,7 +247,7 @@ RegisterKeys() {
     ; 语音键实体键盘没有，不需要遥控模式。
     voice := KEYS[KEYS.Length]
     if voice.action = DICTATION
-        Hotkey("$F24", ToggleDictation)
+        Hotkey("$F24", VoiceKey)
     else
         Hotkey("$F24", RunKey.Bind(voice))
 }
@@ -261,7 +262,8 @@ CenterKey(*) {
 }
 
 ; ===== 语音输入 =====
-; dictate.exe 用本机中文语音识别，文字直接输入到当前光标处，不会自动发送。
+; dictate.exe 直接接收遥控器麦克风的音频并识别，文字输入到当前光标处，不会自动发送。
+; 按住语音键说话，松开后出字。开始和结束都由音频数据流决定，这里不需要处理按键。
 
 StartDictationProcess() {
     global dictatePid
@@ -294,19 +296,13 @@ StopDictationProcess(*) {
         try ProcessClose(dictatePid)
 }
 
-ToggleDictation(*) {
-    DebugLog("语音键 -> " (listening ? "结束" : "开始"))
-    if !listening
-        ShowStatus("正在启动语音…")
-    h := DllCall("OpenEventW", "uint", 0x0002, "int", 0, "wstr", DICTATE_EVENT, "ptr")
-    if !h {
-        DebugLog("语音程序没有运行")
+; 按住时 F24 会连续重复，所以这里只拦截按键，并在语音程序意外退出时把它拉起来。
+VoiceKey(*) {
+    if !dictatePid || !ProcessExist(dictatePid) {
+        DebugLog("语音程序没有运行，正在重启")
         ShowStatus("语音程序没有运行，正在重启")
         StartDictationProcess()
-        return
     }
-    DllCall("SetEvent", "ptr", h)
-    DllCall("CloseHandle", "ptr", h)
 }
 
 ; WM_COPYDATA 里不能发送按键，先放进队列再由定时器输入。
@@ -318,9 +314,7 @@ OnDictation(wParam, lParam, msg, hwnd) {
         case "S":
             listening := true
             DebugLog("语音 -> 已开始")
-            ShowStatus("正在听…再按语音键结束")
-        case "H":
-            ShowStatus("正在听：" SubStr(text, -12))
+            ShowStatus("正在听…松开语音键结束")
         case "P":
             ShowStatus("正在识别…")
         case "W":
@@ -331,12 +325,14 @@ OnDictation(wParam, lParam, msg, hwnd) {
             SetTimer(FlushDictation, -1)
         case "D":
             listening := false
-            DebugLog("语音 -> 已结束")
-            ShowStatus("语音输入结束")
+            DebugLog("语音 -> 已结束 " text)
+            ShowStatus(text != "" ? text : "语音输入结束")
+        case "L":
+            DebugLog("语音 -> " text)
         case "E":
             listening := false
             DebugLog("语音失败：" text)
-            ShowStatus("语音启动失败，检查麦克风")
+            ShowStatus("语音失败：" text)
     }
     return true
 }
@@ -753,7 +749,10 @@ AppNames() {
 
 ; 应用已经打开就切到它的窗口，否则启动它。资源管理器进程常驻，始终新开窗口。
 ActivateOrRun(exe, launch) {
+    global wxPane
     SplitPath(exe, &name, , &ext)
+    if name = "Weixin.exe"
+        wxPane := "list"
     if ext = "exe" && name != "explorer.exe" && WinExist("ahk_exe " name) {
         BringToFront("ahk_exe " name)
         return
@@ -769,6 +768,12 @@ ActivateOrRun(exe, launch) {
             DebugLog("已恢复隐藏窗口：" name)
             return
         }
+        ; 进程在但窗口还没出来，说明正在启动。这时再运行会多开一个微信，所以只等窗口。
+        if WinWait("ahk_exe " name, , 3)
+            BringToFront("ahk_exe " name)
+        else
+            ShowStatus("微信正在启动，请稍等")
+        return
     }
     Run(launch)
 }
@@ -870,18 +875,48 @@ ScrollPage(direction) {
 }
 
 ; ===== 微信 =====
-; 微信 4.x 的界面是自绘的，方向键不能选表情，所以用鼠标悬停表示当前选中项，悬停高亮就是实际目标。
-; 当前区域看鼠标位置：在好友列表上时 ↑↓ 逐个切换好友并立刻打开对话；在聊天区时 ↑↓ 滑动聊天记录、OK 发送。
-; 用鼠标点过哪个区域，遥控器就接着操作哪个区域。表情面板单独记为 emoji 状态。
+; 不移动鼠标：↑↓ 用微信自带的键盘功能，点击和滚轮直接发消息给窗口，光标留在原处。只有选表情例外，见下面。
+; 实测微信自带的行为：没有打开对话时 ↓ 只移动灰色高亮；打开对话后 ↓ 直接切到下一个对话。
+; 高亮行上按回车会弹出独立窗口，所以 OK 改为点击高亮行，对话留在主窗口。
+; wxPane 记录遥控器在操作哪里：list 时 ↑↓ 切换好友，OK 进入；chat 时 ↑↓ 滑动记录，OK 发送。
+; 表情面板单独记为 emoji 状态。方向键不能选表情，要靠鼠标悬停高亮，所以这时才移动鼠标，关闭后放回原位。
 ; 坐标在 120 DPI 下实测，按窗口左上角和底边定位；拖动过好友列表的宽度后需要重新测量。
-global wxState := "normal"
-global wxCol := 0, wxEmojiRow := 0, wxMain := 0
-WX :={listX: 235, listProbeX: 95, listTop: 137, listStep: 81.4, chatLeft: 384,
+global wxState := "normal", wxPane := "list"
+global wxCol := 0, wxEmojiRow := 0, wxMain := 0, wxCursorX := 0, wxCursorY := 0
+WX :={listX: 235, listProbeX: 95, listTop: 137, chatLeft: 384,
     emojiBtnX: 423, emojiBtnBottom: 51, smileyTabX: 237, smileyTabBottom: 104,
     cellX: 173, cellBottom: 466, cellStepX: 55.2, cellStepY: 55, cellCols: 10, cellRows: 6,
-    composerBottom: 110}
+    composerBottom: 110, loginW: 368, loginH: 484, loginBtnBottom: 115, loginProbeLeft: 85,
+    docGapRight: 566, docCloseRight: 289, docCloseY: 71, rowMinHeight: 40}
 
 WxScale(v) => Round(v * A_ScreenDPI / 120)
+
+; 登录框比主窗口小得多，用窗口大小区分。表情面板也是小窗口，所以先排除它。
+WxIsLogin() {
+    if wxState = "emoji"
+        return false
+    WinGetPos(, , &w, &h, "A")
+    return Abs(w - WxScale(WX.loginW)) <= 20 && Abs(h - WxScale(WX.loginH)) <= 20
+}
+
+; 只在“进入微信”的绿色按钮确实存在时点击。扫码页没有这个按钮，这时只提示。
+; 取色点在按钮左侧，避开中间的白色文字。
+WxLoginConfirm() {
+    WinGetPos(&x, &y, &w, &h, "A")
+    py := y + h - WxScale(WX.loginBtnBottom)
+    CoordMode("Pixel", "Screen")
+    color := PixelGetColor(x + w // 2 - WxScale(WX.loginProbeLeft), py, "RGB")
+    red := (color >> 16) & 0xFF, green := (color >> 8) & 0xFF, blue := color & 0xFF
+    if !(green > red + 40 && green > blue + 40) {
+        DebugLog("微信登录框：没有进入按钮，取色=" color)
+        ShowStatus("没有进入按钮，请看手机确认或扫码")
+        return
+    }
+    CoordMode("Mouse", "Screen")
+    Click(x + w // 2, py)
+    DebugLog("微信登录框：已点进入微信")
+    ShowStatus("已点进入微信")
+}
 
 ; 表情面板是独立的弹出窗口，打开后前台不再是主窗口，所以这时继续用记下的主窗口位置。
 WxRect() {
@@ -901,33 +936,38 @@ WxMouseTo(px, py) {
     MouseMove(px, py, 0)
 }
 
-; 鼠标移到好友列表第一行，表示接下来操作好友列表。
-WxHoverList(r) => WxMouseTo(r.x + WxScale(WX.listX), r.y + WxScale(WX.listTop))
-
-WxMouseToChat(r) => WxMouseTo(r.x + (WxScale(WX.chatLeft) + r.w) // 2, r.y + r.h * 45 // 100)
-
 WxWheel(direction) => Send("{Wheel" direction "}")
 
-; 鼠标在好友列表上返回 "list"，在聊天区返回 "chat"，不在可操作区域返回 "outside"。
-WxPane(r) {
-    CoordMode("Mouse", "Screen")
-    MouseGetPos(&mx, &my)
-    if mx < r.x || mx >= r.x + r.w || my < r.y || my >= r.y + r.h
-        return "outside"
-    if mx < r.x + WxScale(WX.listProbeX)
-        return "outside"
-    return mx < r.x + WxScale(WX.chatLeft) ? "list" : "chat"
+; 给主窗口发点击，光标不动。坐标是屏幕坐标，消息里要换成窗口内坐标。
+WxPostClick(px, py) {
+    pt := Buffer(8)
+    NumPut("int", px, "int", py, pt)
+    DllCall("ScreenToClient", "ptr", wxMain, "ptr", pt)
+    pos := (NumGet(pt, 0, "int") & 0xFFFF) | ((NumGet(pt, 4, "int") & 0xFFFF) << 16)
+    PostMessage(0x200, 0, pos, , "ahk_id " wxMain)
+    Sleep(30)
+    PostMessage(0x201, 1, pos, , "ahk_id " wxMain)
+    Sleep(30)
+    PostMessage(0x202, 0, pos, , "ahk_id " wxMain)
 }
 
+; 滚轮消息用屏幕坐标。notches 为正是向上。
+WxPostWheel(r, notches) {
+    pos := ((r.x + (WxScale(WX.chatLeft) + r.w) // 2) & 0xFFFF) | (((r.y + r.h * 45 // 100) & 0xFFFF) << 16)
+    PostMessage(0x20A, ((notches * 120) << 16) & 0xFFFFFFFF, pos, , "ahk_id " wxMain)
+}
+
+; 点输入框，键盘焦点回到这里。输入框有焦点时微信的 ↑↓ 才会切换对话。
+WxFocusComposer(r) => WxPostClick(r.x + (WxScale(WX.chatLeft) + r.w) // 2, r.y + r.h - WxScale(WX.composerBottom))
+
 WxMove(dx, dy) {
-    global wxState, wxCol, wxEmojiRow
+    global wxState, wxCol, wxEmojiRow, wxPane
+    if WxIsLogin()
+        return
     r := WxRect()
     if wxState = "emoji" {
         if dx < 0 && wxCol = 0 {
-            Send("{Esc}")
-            wxState := "normal"
-            WxMouseToChat(r)
-            ShowStatus("已关闭表情")
+            WxCloseEmoji()
             return
         }
         if dx != 0 {
@@ -944,18 +984,19 @@ WxMove(dx, dy) {
         WxMouseTo(p.x, p.y)
         return
     }
-    pane := WxPane(r)
     if dx < 0 {
-        WxHoverList(r)
+        wxPane := "list"
         ShowStatus("好友列表：↑↓ 切换好友")
     } else if dx > 0 {
         WxOpenEmoji(r)
-    } else if pane = "chat" {
-        WxMouseToChat(r)
-        Loop 3
-            WxWheel(dy < 0 ? "Up" : "Down")
+    } else if wxPane = "chat" {
+        WxPostWheel(r, dy < 0 ? 3 : -3)
     } else {
-        WxStepFriend(r, dy)
+        if WxSelectedRowY(r) {
+            WxFocusComposer(r)
+            Sleep(30)
+        }
+        Send(dy < 0 ? "{Up}" : "{Down}")
     }
 }
 
@@ -1001,40 +1042,54 @@ WxSelectedRowY(r) {
     return first ? (first + last) // 2 : 0
 }
 
-; 从已选中的好友移到上一个或下一个并点击，聊天窗口立刻切换。下一行不在可见范围时先滚动列表。
-WxStepFriend(r, dy) {
-    listX := r.x + WxScale(WX.listX)
-    topLimit := r.y + WxScale(WX.listTop - 30)
-    bottomLimit := r.y + r.h - WxScale(50)
-    CoordMode("Mouse", "Screen")
-    Loop 3 {
-        current := WxSelectedRowY(r)
-        if !current {
-            ; 选中行不在可见范围时，打开当前能看到的第一行。
-            WxHoverList(r)
-            Sleep(40)
-            Click()
-            return
+; 找到灰色的键盘高亮行（实测 218,218,220），返回中心纵坐标。普通行是 230 和 238，比它亮。
+; 置顶文件在打开过之后也可能是灰色，所以取最靠下的一段。
+WxHighlightRowY(r) {
+    top := r.y + WxScale(WX.listTop - 40)
+    bottom := r.y + r.h - WxScale(10)
+    pixels := ReadColumn(r.x + WxScale(WX.listProbeX), top, bottom)
+    found := 0, first := 0
+    y := top
+    while y <= bottom {
+        gray := false
+        if y < bottom {
+            color := NumGet(pixels, (y - top) * 4, "uint")
+            red := (color >> 16) & 0xFF, green := (color >> 8) & 0xFF, blue := color & 0xFF
+            gray := Abs(red - 218) <= 4 && Abs(green - 218) <= 4 && Abs(blue - 220) <= 4
         }
-        target := current + dy * WxScale(WX.listStep)
-        if target >= topLimit && target <= bottomLimit {
-            WxMouseTo(listX, target)
-            Sleep(40)
-            Click()
-            return
+        if gray {
+            first := first ? first : y
+        } else if first {
+            if y - first >= WxScale(WX.rowMinHeight)
+                found := (first + y) // 2
+            first := 0
         }
-        WxMouseTo(listX, r.y + r.h // 2)
-        Loop 2
-            WxWheel(dy < 0 ? "Up" : "Down")
-        Sleep(150)
+        y += 1
     }
+    return found
+}
+
+; 右侧打开文档时，它和聊天区之间有一条纯灰色的缝。聊天区没有这样的整列，所以不会误判。
+WxDocPanelOpen(r) {
+    top := r.y + WxScale(100)
+    pixels := ReadColumn(r.x + r.w - WxScale(WX.docGapRight), top, top + WxScale(600))
+    i := 0
+    while i < WxScale(600) {
+        color := NumGet(pixels, i * 4, "uint")
+        if Abs(((color >> 16) & 0xFF) - 224) > 3 || Abs(((color >> 8) & 0xFF) - 224) > 3 || Abs((color & 0xFF) - 224) > 3
+            return false
+        i += 30
+    }
+    return true
 }
 
 ; 点开表情按钮后，用像素变化确认面板真的打开了，再点“普通表情”分类。
 ; 没打开时不继续点，否则会点到好友列表；收藏表情可能一点就发送，所以每次都切回普通表情。
 WxOpenEmoji(r) {
-    global wxState, wxCol, wxEmojiRow
+    global wxState, wxCol, wxEmojiRow, wxCursorX, wxCursorY
     CoordMode("Pixel", "Screen")
+    CoordMode("Mouse", "Screen")
+    MouseGetPos(&wxCursorX, &wxCursorY)
     probes := []
     for offset in [[150, 300], [150, 376], [150, 420]]
         probes.Push({x: r.x + WxScale(offset[1]), y: r.y + r.h - WxScale(offset[2])})
@@ -1043,7 +1098,6 @@ WxOpenEmoji(r) {
     before := []
     for p in probes
         before.Push(PixelGetColor(p.x, p.y))
-    CoordMode("Mouse", "Screen")
     Click(r.x + WxScale(WX.emojiBtnX), r.y + r.h - WxScale(WX.emojiBtnBottom))
     Sleep(400)
     changed := 0
@@ -1051,6 +1105,7 @@ WxOpenEmoji(r) {
         changed += PixelGetColor(p.x, p.y) != before[i]
     if changed < 2 {
         DebugLog("微信：表情面板没有打开，变化点=" changed)
+        WxMouseTo(wxCursorX, wxCursorY)
         ShowStatus("表情面板没打开，先打开一个对话")
         return
     }
@@ -1064,45 +1119,71 @@ WxOpenEmoji(r) {
     ShowStatus("方向键选表情  OK 插入  ← 到头关闭")
 }
 
-WxConfirm() {
+WxCloseEmoji() {
     global wxState
+    Send("{Esc}")
+    wxState := "normal"
+    WxMouseTo(wxCursorX, wxCursorY)
+    ShowStatus("已关闭表情")
+}
+
+WxConfirm() {
+    global wxState, wxPane
+    if WxIsLogin() {
+        WxLoginConfirm()
+        return
+    }
     r := WxRect()
-    CoordMode("Mouse", "Screen")
     if wxState = "emoji" {
+        CoordMode("Mouse", "Screen")
         Click()
         wxState := "normal"
+        wxPane := "chat"
         Sleep(100)
-        ; 面板盖住了好友列表，插入后把鼠标移回聊天区，下一次 OK 才是发送。
-        WxMouseToChat(r)
+        WxMouseTo(wxCursorX, wxCursorY)
         ShowStatus("已插入表情  OK 发送")
         return
     }
-    switch WxPane(r) {
-        case "outside":
-            ; 鼠标不在微信上时不点击也不发送，只把鼠标移到列表。
-            WxHoverList(r)
-            ShowStatus("好友列表：↑↓ 切换好友")
-        case "list":
-            ; 再次点击已打开的对话会把它关掉，所以这一行已经是绿色（已选中）时不点。
-            MouseGetPos(, &my)
-            CoordMode("Pixel", "Screen")
-            color := PixelGetColor(r.x + WxScale(WX.listProbeX), my, "RGB")
-            red := (color >> 16) & 0xFF, green := (color >> 8) & 0xFF, blue := color & 0xFF
-            if !(green > red + 40 && green > blue + 40)
-                Click()
-            Sleep(350)
-            ; 把光标放进输入框，鼠标回到聊天区。
-            Click(r.x + (WxScale(WX.chatLeft) + r.w) // 2, r.y + r.h - WxScale(WX.composerBottom))
-            WxMouseToChat(r)
-            ShowStatus("对话：↑↓ 滑动  → 表情  OK 发送")
-        case "chat":
-            ; 先点输入框，确保回车发到这里。输入框为空时微信不会发送。
-            Click(r.x + (WxScale(WX.chatLeft) + r.w) // 2, r.y + r.h - WxScale(WX.composerBottom))
-            Sleep(80)
-            Send("{Enter}")
-            WxMouseToChat(r)
-            ShowStatus("已发送")
+    if wxPane = "chat" {
+        ; 先点输入框，确保回车发到这里。输入框为空时微信不会发送。
+        WxFocusComposer(r)
+        Sleep(80)
+        Send("{Enter}")
+        ShowStatus("已发送")
+        return
     }
+    ; 已打开的对话再点一次会被关掉，所以有绿色选中行时不点列表。
+    if !WxSelectedRowY(r) {
+        row := WxHighlightRowY(r)
+        if !row {
+            ShowStatus("先按 ↑↓ 选一个好友")
+            return
+        }
+        WxPostClick(r.x + WxScale(WX.listX), row)
+        Sleep(350)
+    }
+    WxFocusComposer(r)
+    wxPane := "chat"
+    ShowStatus("对话：↑↓ 滑动  → 表情  OK 发送")
+}
+
+; 返回上一层：表情面板 -> 右侧文档 -> 聊天区 -> 好友列表。
+WxBack() {
+    global wxPane
+    if WxIsLogin()
+        return
+    if wxState = "emoji" {
+        WxCloseEmoji()
+        return
+    }
+    r := WxRect()
+    if WxDocPanelOpen(r) {
+        WxPostClick(r.x + r.w - WxScale(WX.docCloseRight), r.y + WxScale(WX.docCloseY))
+        ShowStatus("已关闭文档")
+        return
+    }
+    wxPane := "list"
+    ShowStatus("好友列表：↑↓ 切换好友")
 }
 
 ; ===== ChatGPT =====

@@ -16,8 +16,10 @@ $winrt = @("$meta\Windows.Devices.winmd", "$meta\Windows.Foundation.winmd", "$me
 $forms = @("$net\System.Windows.Forms.dll", "$net\System.Drawing.dll", "$net\System.Core.dll")
 
 $targets = @(
-    @{ src = 'scripts\dictate.cs'; refs = @("$net\WPF\System.Speech.dll", "$net\System.Core.dll", "$net\System.Security.dll", "$net\System.Web.Extensions.dll") },
+    @{ src = 'scripts\dictate.cs'; refs = @("$net\WPF\System.Speech.dll", "$net\System.Core.dll", "$net\System.Security.dll", "$net\System.Web.Extensions.dll", "$net\System.Windows.Forms.dll") },
     @{ src = 'tools\keylog.cs'; refs = $forms },
+    @{ src = 'tools\voicecap.cs'; refs = $forms },
+    @{ src = 'tools\wincap.cs'; refs = $forms },
     @{ src = 'tools\gattprobe.cs'; refs = $winrt + $forms },
     @{ src = 'tools\btscan.cs'; refs = $winrt }
 )
@@ -25,7 +27,7 @@ $targets = @(
 foreach ($t in $targets) {
     $src = Join-Path $root $t.src
     $out = [IO.Path]::ChangeExtension($src, '.exe')
-    $target = if ($t.src -like '*btscan*') { '/target:exe' } else { '/target:winexe' }
+    $target = if ($t.src -like '*btscan*' -or $t.src -like '*wincap*') { '/target:exe' } else { '/target:winexe' }
     $cscArgs = @('/nologo', '/platform:x64', $target, '/codepage:65001', "/out:$out") + ($t.refs | ForEach-Object { "/r:$_" }) + @($src)
     & "$net\csc.exe" @cscArgs | Out-Null
     if ($LASTEXITCODE -ne 0) { throw "Build failed: $($t.src)" }

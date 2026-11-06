@@ -10,10 +10,15 @@ Build a working remote-to-PC setup in small verified steps. Most failed setups c
 Bundled files:
 
 - `scripts/remote-control.ahk`: the working script. It has a launcher menu, a remote mode, per-app layouts and a settings window. Treat its app layouts and coordinates as examples to recalibrate.
-- `scripts/dictate.cs`: voice input helper (offline Windows recognition, optional cloud API).
+- `scripts/dictate.cs`: voice input helper. It reads the remote's own microphone over HID and decodes the SBC audio, then recognizes it locally or through an optional cloud API.
+- `scripts/asr/asr_worker.py`: local SenseVoice recognizer, loaded on first use and released when idle.
+- `scripts/setup-asr.ps1`: downloads the recognizer's model and runtime. Tell the person the size first.
 - `scripts/按键设置.ahk`: opens the settings window.
 - `scripts/build.ps1`: compiles every C# program with the .NET compiler built into Windows.
 - `tools/keylog.cs`: guided key logger that records only the remote.
+- `tools/voicecap.cs`: records the remote's raw HID reports while the voice key is held.
+- `tools/sbcdec.py`, `tools/spectro.py`: decode those recordings to WAV and draw spectrograms.
+- `tools/wincap.cs`: captures a process's windows in the background with `PrintWindow`, without activating them. Captures can contain private content, so use it on safe targets and do not keep the files.
 - `tools/gattprobe.cs`: listens on the remote's readable Bluetooth channels.
 - `tools/btscan.cs`: lists nearby Bluetooth LE devices.
 - `references/pitfalls.md`: read it before writing or changing AutoHotkey code, and whenever something fails in a confusing way.
@@ -53,7 +58,9 @@ Sort the keys into two groups, because this drives the design:
 
 Prefer built-in shortcuts over coordinates, since they survive layout changes. In order: the app's menus, its settings, then a read-only search of its bundle (Electron apps keep command tables in `resources/app.asar`, which `mmap` plus a regex can search without unpacking). Verify every shortcut in the running app. Documentation and memory go stale.
 
-Use mouse coordinates only when no shortcut exists. Anchor them to the window edge they follow, scale by DPI, and check with a pixel probe before clicking anything that could cause harm.
+Try the app's native keys too, not only its documented shortcuts. WeChat's arrow keys step through conversations without any mouse, which was found only by testing.
+
+Use mouse coordinates only when no shortcut exists. Anchor them to the window edge they follow, scale by DPI, and check with a pixel probe before clicking anything that could cause harm. Do not move the real cursor if you can avoid it. Many apps accept click and wheel messages sent with `PostMessage`, which leaves the cursor where it is.
 
 ### 5. Build the interaction model
 
@@ -74,23 +81,29 @@ Report what was actually verified. Keep "passed in simulation", "passed in the r
 
 1. Keep everything in one folder the person chooses.
 2. Add a shortcut to the Windows Startup folder and launch through that shortcut once to verify it. Say plainly that a real reboot was not tested if it was not.
-3. Report measured memory use. The script and voice helper take about 40 MB together.
+3. Report measured memory use. The script and voice helper take about 40 MB together, plus about 350 MB while the local voice model is loaded.
 
 ## Safety rules
 
 - **API keys**: never ask for one in chat. The settings window has a password field and stores the key encrypted with Windows DPAPI.
 - **Sending**: never send a message without agreement on the exact text and the target conversation.
-- **Logs**: record key names and results only, never typed or recognized text.
-- **Publishing**: leave out `keymap.ini`, logs and key files. They are personal. Replace device addresses with arguments.
+- **Logs**: record key names, durations, counts and results only, never typed or recognized text.
+- **Publishing**: leave out `keymap.ini`, logs, key files, recordings and window captures. They are personal. Replace device addresses with arguments.
 
 ## Voice input
 
-Check options in this order, and tell the person what each costs before installing anything:
+Check the remote's own microphone before suggesting that the person buy one. A voice remote may already be streaming audio to Windows without appearing as a recording device. Windows treats it as a keyboard, and nothing decodes the audio.
+
+1. Run `tools/voicecap.exe <log file> <hardware id>`. Hold the voice key, say a known sentence, and also count from one to ten.
+2. Look for a steady stream of same-sized reports while the key is held. The X500 sends 21-byte reports at about 125 per second.
+3. Work out the format from its structure. Eight descending nibbles at the start of each frame are SBC scale factors. Packet rate times samples per frame gives the sample rate.
+4. Verify in stages: decode with `tools/sbcdec.py`, look for harmonic stripes with `tools/spectro.py`, then run a good recognizer. A weak recognizer's failure proves nothing, and recordings made without speech cannot confirm a decoder.
+
+Other options, in order. Tell the person what each costs before installing anything:
 
 1. An app's built-in dictation. It may be gated by account even when the shortcut binds successfully, so test it rather than assume it.
 2. `Win+H`, which is unavailable on some systems.
-3. The offline Windows recognizer in `dictate.cs`. It needs no download, but accuracy is modest and it adds little punctuation.
-4. A cloud API through the settings window. Audio is uploaded and billed, and failures fall back to offline recognition.
-5. Local Whisper, which needs a large download.
+3. Local SenseVoice through `scripts/setup-asr.ps1`. It is free and offline, and it was accurate on the X500's narrow-band audio. It needs a download and about 350 MB while loaded.
+4. A cloud API through the settings window. Audio is uploaded and billed, and failures fall back to the local recognizer.
 
-A new microphone rarely fixes recognition errors. Voice remotes may stream audio over a vendor channel in an unknown format, so promise nothing about using the remote's own microphone.
+The offline recognizer built into Windows (`System.Speech`) recognized almost nothing from the same audio, so do not judge the microphone by it.
