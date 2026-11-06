@@ -4,6 +4,16 @@ keymap.ini
 *.log.old
 voice-key.bin
 
+# 录音和截图，可能包含声音或聊天内容
+*.wav
+*.png
+
+# 本机识别的模型和运行库，用 scripts/setup-asr.ps1 下载
+scripts/asr/sherpa-onnx-*/
+scripts/asr/pylib/
+scripts/asr/*.tar.bz2
+__pycache__/
+
 # 编译产物，用 scripts/build.ps1 生成
 *.exe
 *.pdb

@@ -11,6 +11,8 @@ Testing here moves a real person's mouse, keyboard focus and windows, and the ke
 
 Never run simulated keys against the window hosting the current conversation, because they may land in its input box. Leave those keys for the person to try.
 
+Do not use arrow keys to explore a real chat app. In WeChat a single press can open the next private conversation, mark it as read and put its messages in your capture. Start on a safe conversation, ask the person first, and compare captures by whether pixels changed instead of reading them. Delete captures afterwards.
+
 ## Before a test
 
 Tell the person how long it takes and what will happen on screen, such as windows switching, volume changing or apps opening, and ask them not to touch the keyboard or mouse. If they stop a screen-control action, stop and wait for them.

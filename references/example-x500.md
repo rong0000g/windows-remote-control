@@ -19,15 +19,28 @@ Windows listed it as `语音助手` with hardware ID `VID&02568A_PID&9869`.
 | Source | F1 | Yes |
 | F+ / F- | F5 / F6 | Yes |
 | Key between F- and F+ | F16 | No |
-| Voice | F24, plus 21-byte packets on a vendor collection | No |
+| Voice | F24 (repeats while held), plus audio on a vendor collection | No |
 | Back, Home, Volume, Mute | Nothing seen | Not applicable |
 | Power | Not tested, because it might sleep the PC | Not applicable |
+
+## Microphone
+
+Audio arrives only while the voice key is held, on the HID collection with usage page `0xFF01` and usage `0x0001`, readable through Raw Input without a driver. Each report is 21 bytes: `0xFD`, then one 20-byte SBC frame with its header and CRC removed.
+
+| Property | Value | How it was established |
+|---|---|---|
+| Frame layout | 4 bytes of scale factors, 16 bytes of samples | Packet structure |
+| Subbands, blocks | 8, 16 | 8 scale factors; 16 bytes at bitpool 8 |
+| Sample rate | 16 kHz | Inferred: about 125 frames per second times 128 samples |
+| Bit allocation | Loudness | Inferred: less high-frequency noise than SNR. Recognition passed with both |
+
+Almost all the energy is below 2 kHz. SenseVoice still recognized a test sentence and counting from one to ten without errors.
 
 ## App layouts
 
 **Chrome:** up and down scroll with the wheel, left and right change system volume, OK is the media key, Source toggles video fullscreen (`f`, or a double-click on sites listed in `VIDEO_DOUBLE_CLICK_SITES`), Settings moves to the next tab.
 
-**WeChat 4.x:** with the mouse over the friend list, up and down step between friends and open each immediately; with the mouse over the chat, they scroll history. Left returns to the list, right opens emoji (arrows move, OK inserts), and OK sends.
+**WeChat 4.x:** the mouse stays still except when choosing emoji. In the list, up and down use WeChat's own arrow keys: they move a gray highlight when no conversation is open and switch directly once one is. OK opens the conversation, and inside it up and down scroll while OK sends. Left returns to the list, right opens emoji (arrows move, OK inserts), and Settings goes back a level, including closing a document panel. On the login window, OK presses the green enter button.
 
 **Grok Bot:** the same logic, with right starting voice chat.
 
@@ -37,4 +50,4 @@ Windows listed it as `语音助手` with hardware ID `VID&02568A_PID&9869`.
 
 ## Verification status
 
-The remote keys and most of these layouts were exercised with simulated keys or by the original user. Sending in WeChat and Grok, Grok's voice button, and all of the Claude layout were not observed directly by the author. Recheck coordinates on any other screen, DPI or list width.
+The remote keys and most of these layouts were exercised with simulated keys or by the original user. The original user also tried the WeChat layout and voice input with the real remote and reported them working. Grok's voice button and all of the Claude layout were not observed directly by the author. The gray highlight color was measured in WeChat's light theme only. Recheck coordinates on any other screen, DPI or list width.
